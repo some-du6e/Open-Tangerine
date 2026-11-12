@@ -14,6 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2025]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -33,6 +34,7 @@ jobs:
   installer:
     needs: test
     runs-on: windows-2025
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -58,14 +60,18 @@ jobs:
       - name: Silent install and uninstall smoke test
         shell: pwsh
         run: |
-          Start-Process dist\Toss-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          # WaitForExit, not Start-Process -Wait: -Wait also waits for the toss.exe the installer launches.
+          $setup = Start-Process dist\Toss-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru
+          if (-not $setup.WaitForExit(120000)) { throw "installer hung" }
           $exe = "$env:LOCALAPPDATA\Programs\Toss\toss.exe"
           if (-not (Test-Path $exe)) { throw "not installed" }
           Start-Sleep 3
           if (-not (Get-Process toss -ErrorAction SilentlyContinue)) { throw "toss.exe didn't stay running after install" }
-          Start-Process "$env:LOCALAPPDATA\Programs\Toss\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES' -Wait
-          Start-Sleep 2
+          # The uninstaller relaunches itself from %TEMP%, so poll for the result.
+          Start-Process "$env:LOCALAPPDATA\Programs\Toss\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES'
+          for ($i = 0; $i -lt 60 -and (Test-Path $exe); $i++) { Start-Sleep 1 }
           if (Test-Path $exe) { throw "uninstall left toss.exe behind" }
+          if (Get-Process toss -ErrorAction SilentlyContinue) { throw "toss.exe still running after uninstall" }
       - uses: actions/upload-artifact@v4
         with:
           name: Toss-Setup
