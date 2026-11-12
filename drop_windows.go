@@ -47,7 +47,7 @@ var dropVtbl = [7]uintptr{
 	// The target lives for the whole process, so reference counting is a no-op.
 	syscall.NewCallback(func(this *dropTarget) uintptr { return 1 }),
 	syscall.NewCallback(func(this *dropTarget) uintptr { return 1 }),
-	syscall.NewCallback(func(this *dropTarget, data uintptr, keys uint32, pt uintptr, effect *uint32) uintptr {
+	syscall.NewCallback(func(this *dropTarget, data *dataObject, keys uint32, pt uintptr, effect *uint32) uintptr {
 		x, y := unpackPoint(pt)
 		*effect = this.handler.dragEnter(dropPaths(data), *effect, x, y)
 		return 0
@@ -65,7 +65,7 @@ var dropVtbl = [7]uintptr{
 		this.handler.dragLeave()
 		return 0
 	}),
-	syscall.NewCallback(func(this *dropTarget, data uintptr, keys uint32, pt uintptr, effect *uint32) uintptr {
+	syscall.NewCallback(func(this *dropTarget, data *dataObject, keys uint32, pt uintptr, effect *uint32) uintptr {
 		x, y := unpackPoint(pt)
 		if *effect&dropEffectCopy == 0 {
 			*effect = dropEffectNone
@@ -96,15 +96,17 @@ type stgMedium struct {
 	release uintptr
 }
 
+// dataObject is the head of a COM IDataObject; GetData is vtable slot 3.
+type dataObject struct{ vtbl *[4]uintptr }
+
 // dropPaths reads the file list out of an IDataObject.
-func dropPaths(data uintptr) []string {
-	if data == 0 {
+func dropPaths(data *dataObject) []string {
+	if data == nil {
 		return nil
 	}
-	vtbl := *(**[4]uintptr)(unsafe.Pointer(data))
 	f := formatEtc{format: cfHDrop, aspect: 1, index: -1, tymed: tymedHGlobal}
 	var m stgMedium
-	if hr, _, _ := syscall.SyscallN(vtbl[3], data, uintptr(unsafe.Pointer(&f)), uintptr(unsafe.Pointer(&m))); hr != 0 {
+	if hr, _, _ := syscall.SyscallN(data.vtbl[3], uintptr(unsafe.Pointer(data)), uintptr(unsafe.Pointer(&f)), uintptr(unsafe.Pointer(&m))); hr != 0 {
 		return nil
 	}
 	defer pReleaseStgMedium.Call(uintptr(unsafe.Pointer(&m)))
