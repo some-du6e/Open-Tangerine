@@ -29,6 +29,12 @@ class BackgroundController(QObject):
             self.shift.setChecked(window.shift_toggle.isChecked())
             self.shift.toggled.connect(window.shift_toggle.setChecked)
             window.shift_toggle.toggled.connect(self.shift.setChecked)
+        if window.toss:
+            self.throw = self.menu.addAction('Enable throw-to-convert')
+            self.throw.setCheckable(True)
+            self.throw.setChecked(window.toss_toggle.isChecked())
+            self.throw.toggled.connect(window.toss_toggle.setChecked)
+            window.toss_toggle.toggled.connect(self.throw.setChecked)
         self.menu.addSeparator()
         self.menu.addAction('Quit', window.request_quit)
         self.tray.setContextMenu(self.menu)

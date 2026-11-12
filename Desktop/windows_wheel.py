@@ -331,14 +331,7 @@ class WindowsShiftWheel(QObject):
             self.overlay.present(paths, self.point)
 
     def convert(self, paths, target):
-        if self.window.batch and self.window.batch.isRunning(): return
-        self.window.clear_files(); self.window.add_paths(paths)
-        if len(self.window.paths) != len(paths): return
-        self.window.target.setCurrentText(target)
-        previous = self.window.batch
-        self.window.start()
-        if self.window.island and self.window.batch is not previous:
-            self.window.island.track(self.window.batch, target, len(paths))
+        self.window.quick_convert(paths, target)
 
     def stop(self):
         self.timer.stop(); self.timeout.stop(); self.overlay.close(); self.lookup.kill()
