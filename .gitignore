@@ -1,8 +1,2 @@
-.DS_Store
-.build/
-dist/
-*.log
-.env
-.env.*
-*.p12
-*.mobileprovision
+/dist/
+*.syso
