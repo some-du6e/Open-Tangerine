@@ -1,0 +1,85 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Render overlay previews
+        if: runner.os == 'Linux'
+        run: mkdir -p preview && PREVIEW_DIR=$PWD/preview go test -run TestPreview ./...
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: preview
+          path: preview/*.png
+
+  installer:
+    needs: test
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Embed icon and DPI-aware manifest
+        run: |
+          go install github.com/tc-hib/go-winres@v0.3.3
+          go-winres simply --icon assets/icon.png --manifest gui --product-name Toss --file-description "Toss: throw files to convert them"
+      - name: Build
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: go build -trimpath -ldflags "-H windowsgui -s -w" -o dist/toss.exe .
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc installer\toss.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Silent install and uninstall smoke test
+        shell: pwsh
+        run: |
+          # WaitForExit, not Start-Process -Wait: -Wait also waits for the toss.exe the installer launches.
+          $setup = Start-Process dist\Toss-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru
+          if (-not $setup.WaitForExit(120000)) { throw "installer hung" }
+          $exe = "$env:LOCALAPPDATA\Programs\Toss\toss.exe"
+          if (-not (Test-Path $exe)) { throw "not installed" }
+          Start-Sleep 3
+          if (-not (Get-Process toss -ErrorAction SilentlyContinue)) { throw "toss.exe didn't stay running after install" }
+          # The uninstaller relaunches itself from %TEMP%, so poll for the result.
+          Start-Process "$env:LOCALAPPDATA\Programs\Toss\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES'
+          for ($i = 0; $i -lt 60 -and (Test-Path $exe); $i++) { Start-Sleep 1 }
+          if (Test-Path $exe) { throw "uninstall left toss.exe behind" }
+          if (Get-Process toss -ErrorAction SilentlyContinue) { throw "toss.exe still running after uninstall" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Toss-Setup
+          path: dist/Toss-Setup.exe
+      - name: Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/Toss-Setup.exe --generate-notes
+    permissions:
+      contents: write
