@@ -59,7 +59,7 @@ class Window(QMainWindow):
         box=QWidget();self.setCentralWidget(box);layout=QVBoxLayout(box);layout.setContentsMargins(28,24,28,24);layout.setSpacing(12)
         title=QLabel('Open Tangerine');title.setStyleSheet('font-size:30px;font-weight:bold;color:#ff762b');layout.addWidget(title)
         layout.addWidget(QLabel('Drop your files. Choose an output. Keep working.'))
-        note=QLabel('Local processing · Originals kept\n'+('Enable the optional wheel below. Drag files from Explorer/Desktop and hold Shift. Escape cancels.' if os.name=='nt' else 'Drop files into this window to convert.'));note.setWordWrap(True);layout.addWidget(note)
+        note=QLabel('Local processing · Originals kept\n'+('Enable the optional wheel below. Drag files from Explorer/Desktop and hold Shift. Escape cancels.\nOr enable throwing: drag a file, swing it fast, and let go to fling it into a bin.' if os.name=='nt' else 'Drop files into this window to convert.'));note.setWordWrap(True);layout.addWidget(note)
         workspace=QHBoxLayout();layout.addLayout(workspace)
         self.wheel=GlassWheel();self.wheel.setStyleSheet(WHEEL_STYLE);workspace.addWidget(self.wheel)
         self.list=DropList();self.list.files.connect(self.add_paths);workspace.addWidget(self.list,1)
@@ -87,7 +87,7 @@ class Window(QMainWindow):
         updates=QPushButton('Downloads / updates');updates.clicked.connect(lambda:QDesktopServices.openUrl(QUrl(WEBSITE+'?platform=desktop&version='+VERSION+'#desktop')));row.addWidget(updates)
         limits=QPushButton('Supported features');limits.clicked.connect(self.show_limits);row.addWidget(limits)
         layout.addWidget(QLabel('Sintax Error Private Limited · GPL-3.0-only · v'+VERSION))
-        self.shift_wheel=None;self.island=None
+        self.shift_wheel=None;self.island=None;self.toss=None
         if os.name=='nt' and global_wheel and '--smoke-test' not in sys.argv:
             from windows_wheel import WindowsShiftWheel
             from island import ConversionIsland, STYLES
@@ -98,12 +98,32 @@ class Window(QMainWindow):
             self.shift_wheel.set_enabled(self.shift_toggle.isChecked())
             self.shift_toggle.toggled.connect(self.toggle_shift_wheel)
             layout.addWidget(self.shift_toggle)
+            from toss import TossMonitor
+            self.toss=TossMonitor(self)
+            self.toss_toggle=QCheckBox('Enable experimental throw-to-convert: fling a dragged file into a bin')
+            self.toss_toggle.setChecked(self.settings.value('tossFiles', False, type=bool))
+            self.toss.set_enabled(self.toss_toggle.isChecked())
+            self.toss_toggle.toggled.connect(self.toggle_toss)
+            layout.addWidget(self.toss_toggle)
             row=QHBoxLayout();layout.addLayout(row);row.addWidget(QLabel('Wheel progress island'))
             self.island_style=QComboBox();self.island_style.addItems(STYLES);self.island_style.setAccessibleName('Wheel progress island style')
             self.island_style.setCurrentText(self.island.style_name);self.island_style.currentTextChanged.connect(self.set_island_style);row.addWidget(self.island_style,1)
     def toggle_shift_wheel(self, enabled):
         self.settings.setValue('shiftWheel',enabled)
         self.shift_wheel.set_enabled(enabled)
+    def toggle_toss(self, enabled):
+        self.settings.setValue('tossFiles',enabled)
+        self.toss.set_enabled(enabled)
+    def quick_convert(self, paths, target):
+        """Convert straight from the wheel or a throw, reporting in the island."""
+        if self.batch and self.batch.isRunning():return
+        self.clear_files();self.add_paths(paths)
+        if len(self.paths)!=len(paths):return
+        self.target.setCurrentText(target)
+        previous=self.batch
+        self.start()
+        if self.island and self.batch is not previous:
+            self.island.track(self.batch,target,len(paths))
     def set_island_style(self, style):
         self.settings.setValue('islandStyle',style)
         self.island.set_style(style)
@@ -131,7 +151,7 @@ class Window(QMainWindow):
             self.settings.setValue('ffmpeg',str(Path(path).resolve()));self.status.setText('FFmpeg selected. It runs only when you request media conversion.')
     def ffmpeg_path(self):return self.settings.value('ffmpeg','')
     def show_limits(self):
-        QMessageBox.information(self,'Trial capabilities','Images: PNG, JPEG, WebP, TIFF, BMP output; PNG/JPEG/WebP/TIFF/BMP/AVIF input. Resize and rotate. Single-frame only; 40 megapixels. HEIC and SVG are not supported in this trial.\n\nPDF: image to PDF, merge (up to 200 pages), split and extract text. No OCR or password-protected PDFs.\n\nWord: .docx body and table text to plain text, or to a text-only PDF in Helvetica (Latin text only). Formatting, images, explicitly hidden runs, headers, footers and notes are not kept. No .doc, macro-enabled or encrypted files.\n\nMedia: MP4/WebM/MP3/WAV/FLAC/Ogg using a separately selected FFmpeg. Codecs depend on your installation. No FFmpeg download is performed.\n\nSimple SRT/VTT conversion and SHA-256 checksums.\n\nWorkers have time/output limits but are not an operating-system security sandbox. Process trusted files. Archives and the Mac notch are not included. Windows offers an opt-in Explorer/Desktop Shift drag wheel with a top-of-screen progress island, and tray mode; Linux uses the app window. Failed files do not stop the batch.')
+        QMessageBox.information(self,'Trial capabilities','Images: PNG, JPEG, WebP, TIFF, BMP output; PNG/JPEG/WebP/TIFF/BMP/AVIF input. Resize and rotate. Single-frame only; 40 megapixels. HEIC and SVG are not supported in this trial.\n\nPDF: image to PDF, merge (up to 200 pages), split and extract text. No OCR or password-protected PDFs.\n\nWord: .docx body and table text to plain text, or to a text-only PDF in Helvetica (Latin text only). Formatting, images, explicitly hidden runs, headers, footers and notes are not kept. No .doc, macro-enabled or encrypted files.\n\nMedia: MP4/WebM/MP3/WAV/FLAC/Ogg using a separately selected FFmpeg. Codecs depend on your installation. No FFmpeg download is performed.\n\nSimple SRT/VTT conversion and SHA-256 checksums.\n\nWorkers have time/output limits but are not an operating-system security sandbox. Process trusted files. Archives and the Mac notch are not included. Windows offers an opt-in Explorer/Desktop Shift drag wheel, opt-in throw-to-convert bins, a top-of-screen progress island, and tray mode; Linux uses the app window. Failed files do not stop the batch.')
     def start(self):
         if not self.paths or (self.batch and self.batch.isRunning()):return
         self.batch_errors=[]
@@ -167,6 +187,7 @@ class Window(QMainWindow):
             self.batch.cancel.set();event.ignore();self.status.setText('Stopping conversion before closing…');QTimer.singleShot(200,self.close)
         else:
             if self.shift_wheel:self.shift_wheel.stop()
+            if self.toss:self.toss.stop()
             if self.island:self.island.stop()
             if self.background:
                 self.background.stop()
